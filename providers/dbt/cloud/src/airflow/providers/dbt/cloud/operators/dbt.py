@@ -42,6 +42,11 @@ if TYPE_CHECKING:
     from airflow.sdk import Context
 
 
+def dbt_cloud_run_page_url(run: dict[str, Any], *, host: str) -> str:
+    """Return the dbt Cloud page for one job run, where its logs are shown."""
+    return f"https://{host}/deploy/{run['account_id']}/projects/{run['project_id']}/runs/{run['id']}/"
+
+
 class DbtCloudRunJobOperatorLink(BaseOperatorLink):
     """Allows users to monitor the triggered job run directly in dbt Cloud."""
 
@@ -180,6 +185,7 @@ class DbtCloudRunJobOperator(BaseOperator):
         )["id"]
 
     def _get_or_trigger_run(self, context: Context) -> tuple[int, str]:
+        host = DbtCloudHook._get_tenant_domain(self.hook.connection)
         non_terminal_runs = None
 
         if self.reuse_existing_run:
@@ -193,9 +199,8 @@ class DbtCloudRunJobOperator(BaseOperator):
             ).json()["data"]
 
             if non_terminal_runs:
-                run_id = non_terminal_runs[0]["id"]
-                job_run_url = non_terminal_runs[0]["href"]
-                return run_id, job_run_url
+                run = non_terminal_runs[0]
+                return run["id"], dbt_cloud_run_page_url(run, host=host)
 
         is_retry = context["ti"].try_number != 1
 
@@ -209,10 +214,8 @@ class DbtCloudRunJobOperator(BaseOperator):
             additional_run_config=self.additional_run_config,
         )
 
-        run_id = trigger_job_response.json()["data"]["id"]
-        job_run_url = trigger_job_response.json()["data"]["href"]
-
-        return run_id, job_run_url
+        run = trigger_job_response.json()["data"]
+        return run["id"], dbt_cloud_run_page_url(run, host=host)
 
     def _handle_terminal_status(self, status: int) -> int | None:
 
@@ -245,9 +248,8 @@ class DbtCloudRunJobOperator(BaseOperator):
 
         self.run_id, job_run_url = self._get_or_trigger_run(context)
 
-        # Push the ``job_run_url`` and ``job_run_id`` value to XCom regardless of what happens during execution.
-        # This enables job monitoring via the operator link and provides direct access
-        # to the job run ID without requiring users to parse the URL manually
+        # Push the run page and run id to XCom regardless of what happens during execution.
+        # ``job_run_url`` opens the dbt Cloud run page. ``job_run_id`` is the numeric id.
         context["ti"].xcom_push(key="job_run_url", value=job_run_url)
         context["ti"].xcom_push(key="job_run_id", value=self.run_id)
 

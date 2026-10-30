@@ -58,31 +58,31 @@ JOB_ID = 4444
 JOB_NAME = "job_name"
 RUN_ID = 5555
 EXPECTED_JOB_RUN_OP_EXTRA_LINK = (
-    "https://cloud.getdbt.com/#/accounts/{account_id}/projects/{project_id}/runs/{run_id}/"
+    "https://cloud.getdbt.com/deploy/{account_id}/projects/{project_id}/runs/{run_id}/"
 )
 DEFAULT_ACCOUNT_JOB_RUN_RESPONSE = {
     "data": {
         "id": RUN_ID,
-        "href": EXPECTED_JOB_RUN_OP_EXTRA_LINK.format(
-            account_id=DEFAULT_ACCOUNT_ID, project_id=PROJECT_ID, run_id=RUN_ID
-        ),
+        "account_id": DEFAULT_ACCOUNT_ID,
+        "project_id": PROJECT_ID,
+        "href": f"https://cloud.getdbt.com/api/v2/accounts/{DEFAULT_ACCOUNT_ID}/runs/{RUN_ID}/",
     }
 }
 EXPLICIT_ACCOUNT_JOB_RUN_RESPONSE = {
     "data": {
         "id": RUN_ID,
-        "href": EXPECTED_JOB_RUN_OP_EXTRA_LINK.format(
-            account_id=ACCOUNT_ID, project_id=PROJECT_ID, run_id=RUN_ID
-        ),
+        "account_id": ACCOUNT_ID,
+        "project_id": PROJECT_ID,
+        "href": f"https://cloud.getdbt.com/api/v2/accounts/{ACCOUNT_ID}/runs/{RUN_ID}/",
     }
 }
 JOB_RUN_ERROR_RESPONSE = {
     "data": [
         {
             "id": RUN_ID,
-            "href": EXPECTED_JOB_RUN_OP_EXTRA_LINK.format(
-                account_id=ACCOUNT_ID, project_id=PROJECT_ID, run_id=RUN_ID
-            ),
+            "account_id": ACCOUNT_ID,
+            "project_id": PROJECT_ID,
+            "href": f"https://cloud.getdbt.com/api/v2/accounts/{ACCOUNT_ID}/runs/{RUN_ID}/",
             "status": DbtCloudJobRunStatus.ERROR.value,
         }
     ]
@@ -737,9 +737,22 @@ class TestDbtCloudRunJobOperator:
         assert operator.schema_override == self.config["schema_override"]
         assert operator.additional_run_config == self.config["additional_run_config"]
 
+        run_response = (
+            DEFAULT_ACCOUNT_JOB_RUN_RESPONSE if account_id is None else EXPLICIT_ACCOUNT_JOB_RUN_RESPONSE
+        )
+        mock_run_job.return_value = mock_response_json(run_response)
+
         with patch.object(DbtCloudHook, "get_job_run") as mock_get_job_run:
             operator.execute(context=self.mock_context)
 
+            self.mock_ti.xcom_push.assert_any_call(
+                key="job_run_url",
+                value=EXPECTED_JOB_RUN_OP_EXTRA_LINK.format(
+                    account_id=account_id or DEFAULT_ACCOUNT_ID,
+                    project_id=PROJECT_ID,
+                    run_id=RUN_ID,
+                ),
+            )
             mock_run_job.assert_called_once_with(
                 account_id=account_id,
                 job_id=JOB_ID,
@@ -766,17 +779,17 @@ class TestDbtCloudRunJobOperator:
             "data": [
                 {
                     "id": 10000,
+                    "account_id": DEFAULT_ACCOUNT_ID,
+                    "project_id": PROJECT_ID,
                     "status": 1,
-                    "href": EXPECTED_JOB_RUN_OP_EXTRA_LINK.format(
-                        account_id=DEFAULT_ACCOUNT_ID, project_id=PROJECT_ID, run_id=RUN_ID
-                    ),
+                    "href": f"https://cloud.getdbt.com/api/v2/accounts/{DEFAULT_ACCOUNT_ID}/runs/10000/",
                 },
                 {
                     "id": 10001,
+                    "account_id": DEFAULT_ACCOUNT_ID,
+                    "project_id": PROJECT_ID,
                     "status": 2,
-                    "href": EXPECTED_JOB_RUN_OP_EXTRA_LINK.format(
-                        account_id=DEFAULT_ACCOUNT_ID, project_id=PROJECT_ID, run_id=RUN_ID
-                    ),
+                    "href": f"https://cloud.getdbt.com/api/v2/accounts/{DEFAULT_ACCOUNT_ID}/runs/10001/",
                 },
             ]
         }
@@ -804,6 +817,14 @@ class TestDbtCloudRunJobOperator:
 
         operator.execute(context=self.mock_context)
 
+        self.mock_ti.xcom_push.assert_any_call(
+            key="job_run_url",
+            value=EXPECTED_JOB_RUN_OP_EXTRA_LINK.format(
+                account_id=DEFAULT_ACCOUNT_ID,
+                project_id=PROJECT_ID,
+                run_id=10000,
+            ),
+        )
         mock_run_job.assert_not_called()
         mock_get_job_runs.assert_called_with(
             account_id=account_id,
@@ -1034,7 +1055,14 @@ class TestDbtCloudRunJobOperator:
         else:
             _run_response = EXPLICIT_ACCOUNT_JOB_RUN_RESPONSE
 
-        ti.xcom_push(key="job_run_url", value=_run_response["data"]["href"])
+        ti.xcom_push(
+            key="job_run_url",
+            value=EXPECTED_JOB_RUN_OP_EXTRA_LINK.format(
+                account_id=account_id or DEFAULT_ACCOUNT_ID,
+                project_id=PROJECT_ID,
+                run_id=_run_response["data"]["id"],
+            ),
+        )
 
         if AIRFLOW_V_3_0_PLUS and mock_supervisor_comms:
             mock_supervisor_comms.send.return_value = XComResult(
